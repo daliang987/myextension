@@ -12,12 +12,18 @@ from javax.swing import JTabbedPane;
 from javax.swing import JTable;
 from javax.swing import SwingUtilities;
 from javax.swing.table import AbstractTableModel;
+from javax.swing import JFrame
+from javax.swing import JPanel
+from javax.swing import JButton
+from java.awt import BorderLayout
+
 from threading import Lock
+import re
 
 host='devxjy.xinbeiting.com'
-Cookie='Cookie: JSESSIONID=1CDCFEEF242BCDE713BE45CE14E567CE; com.trs.idm.coSessionId=1CDCFEEF242BCDE713BE45CE14E567CE; refreshedTimestamp=1574920034445; IDSTLogin=wang@trs.com_[IDSENC]DUJNkbtYVT3wpBxNGmQZ9w=='
-extract_path=['/websocket/5','/websocket/1']
-extract_file=['/wcm/mlfcenter.do?methodname=getCurrUserInfo&serviceid=mlf_extuser']
+Cookie='Cookie: JSESSIONID=4db5e904-b1a3-4d6c-8339-c9dba7fe828b'
+reobj=r'^/websocket/\d+$'
+extract_file=['']
 
 
 class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController, AbstractTableModel):
@@ -42,11 +48,25 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
         # main split pane
         self._splitpane = JSplitPane(JSplitPane.VERTICAL_SPLIT)
+
+        # user jpanel add compenents
         
+        self._panel=JPanel()
+        self._panel.setLayout(BorderLayout())
+
+        subpanel=JPanel()
+        button =JButton("OK")
+        subpanel.add(button)
+    
+
+        self._panel.add(subpanel,BorderLayout.NORTH)
+
         # table of log entries
         logTable = Table(self)
         scrollPane = JScrollPane(logTable)
         self._splitpane.setLeftComponent(scrollPane)
+
+        self._panel.add(self._splitpane,BorderLayout.CENTER)
 
         # tabs with request/response viewers
         tabs = JTabbedPane()
@@ -58,9 +78,13 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
         # customize our UI components
         callbacks.customizeUiComponent(self._splitpane)
-        callbacks.customizeUiComponent(logTable)
-        callbacks.customizeUiComponent(scrollPane)
-        callbacks.customizeUiComponent(tabs)
+        # callbacks.customizeUiComponent(logTable)
+        # callbacks.customizeUiComponent(scrollPane)
+        # callbacks.customizeUiComponent(tabs)
+
+        callbacks.customizeUiComponent(self._panel)
+        callbacks.customizeUiComponent(subpanel)
+        # callbacks.customizeUiComponent(button)
         
         # add the custom tab to Burp's UI
         callbacks.addSuiteTab(self)
@@ -75,10 +99,10 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
     #
     
     def getTabCaption(self):
-        return "Logger"
+        return "Auth Test"
     
     def getUiComponent(self):
-        return self._splitpane
+        return self._panel
         
     #
     # implement IHttpListener
@@ -99,13 +123,10 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
 
             file = requestInfo.getUrl().getFile()
 
-            if file in extract_file:
+            if file in extract_file or re.match(reobj,file):
                 return
 
             path=requestInfo.getUrl().getPath()
-
-            if path in extract_path:
-                return
 
             if '.' in path:
                 ext = path.split('.')[-1]
@@ -129,6 +150,8 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             newRequestResponse=self._callbacks.makeHttpRequest(messageInfo.getHttpService(),bytesNewRequest)
             
 
+            responseInfo=self._helpers.analyzeResponse(newRequestResponse.getResponse())
+
             # if abs(len(newRequestResponse.getResponse())-len(messageInfo.getResponse()))>500:
             #     return
 
@@ -136,7 +159,14 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             # create a new log entry with the message details
             self._lock.acquire()
             row = self._log.size()
-            self._log.add(LogEntry(toolFlag, self._callbacks.saveBuffersToTempFiles(newRequestResponse), self._helpers.analyzeRequest(messageInfo).getUrl()))
+
+            log_entry=LogEntry(toolFlag, 
+                requestInfo.getMethod(),
+                self._callbacks.saveBuffersToTempFiles(newRequestResponse), 
+                responseInfo.getStatusCode(),
+                self._helpers.analyzeRequest(messageInfo).getUrl())
+            
+            self._log.add(log_entry)
             self.fireTableRowsInserted(row, row)
             self._lock.release()
 
@@ -151,12 +181,16 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             return 0
 
     def getColumnCount(self):
-        return 2
+        return 4
 
     def getColumnName(self, columnIndex):
         if columnIndex == 0:
             return "Tool"
         if columnIndex == 1:
+            return "Method"
+        if columnIndex == 2:
+            return "Status"
+        if columnIndex == 3:
             return "URL"
         return ""
 
@@ -165,6 +199,10 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         if columnIndex == 0:
             return self._callbacks.getToolName(logEntry._tool)
         if columnIndex == 1:
+            return logEntry._method
+        if columnIndex == 2:
+            return logEntry._status
+        if columnIndex == 3:
             return logEntry._url.toString()
         return ""
 
@@ -206,7 +244,9 @@ class Table(JTable):
 #
 
 class LogEntry:
-    def __init__(self, tool, requestResponse, url):
+    def __init__(self, tool,method, requestResponse,status, url):
         self._tool = tool
+        self._method=method
         self._requestResponse = requestResponse
+        self._status=status
         self._url = url
